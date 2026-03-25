@@ -130,7 +130,6 @@ fn test_fees_collected_event_emitted() {
 }
 
 #[test]
-#[test]
 fn test_version_stored_on_init() {
     let (env, client, _, _, _, _, _) = setup();
     assert_eq!(client.get_version(), String::from_str(&env, "1.0.0"));
@@ -170,6 +169,18 @@ fn test_upgrade_version_non_admin_fails() {
 fn test_upgrade_version_invalid_semver_fails() {
     let (env, client, _, _, _, _, _) = setup();
     client.upgrade_version(&String::from_str(&env, "1.0"));
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #11)")] // InvalidVersion
+fn test_initialize_invalid_version_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token = Address::generate(&env);
+    let contract_id = env.register_contract(None, SplitEscrowContract);
+    let client = SplitEscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &token, &String::from_str(&env, "1.0"));
 }
 
 #[test]
