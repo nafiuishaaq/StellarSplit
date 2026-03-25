@@ -62,7 +62,7 @@ fn test_fee_deducted_and_sent_to_treasury_on_release() {
     client.set_fee(&250u32); // 2.5%
 
     let split_id =
-        client.create_escrow(&creator, &String::from_str(&env, "Dinner"), &10_000, &None, &None);
+        client.create_escrow(&creator, &String::from_str(&env, "Dinner"), &10_000, &None, &None, &false);
     client.deposit(&split_id, &participant, &10_000);
     client.release_funds(&split_id);
 
@@ -84,7 +84,7 @@ fn test_admin_can_update_fee_and_treasury() {
     client.set_fee(&100u32);
 
     let split_a =
-        client.create_escrow(&creator, &String::from_str(&env, "A"), &1_000, &None, &None);
+        client.create_escrow(&creator, &String::from_str(&env, "A"), &1_000, &None, &None, &false);
     client.deposit(&split_a, &participant, &1_000);
     client.release_funds(&split_a);
     assert_eq!(token_client.balance(&treasury_a), 10);
@@ -94,7 +94,7 @@ fn test_admin_can_update_fee_and_treasury() {
     client.set_fee(&300u32);
 
     let split_b =
-        client.create_escrow(&creator, &String::from_str(&env, "B"), &2_000, &None, &None);
+        client.create_escrow(&creator, &String::from_str(&env, "B"), &2_000, &None, &None, &false);
     client.deposit(&split_b, &participant, &2_000);
     client.release_funds(&split_b);
     assert_eq!(token_client.balance(&treasury_b), 60);
@@ -121,7 +121,7 @@ fn test_fees_collected_event_emitted() {
     let before_len = env.events().all().len();
 
     let split_id =
-        client.create_escrow(&creator, &String::from_str(&env, "Event"), &1_000, &None, &None);
+        client.create_escrow(&creator, &String::from_str(&env, "Event"), &1_000, &None, &None, &false);
     client.deposit(&split_id, &participant, &1_000);
     client.release_funds(&split_id);
 
@@ -138,6 +138,7 @@ fn test_default_max_participants_is_50() {
         &100,
         &None,
         &None,
+        &false,
     );
     let escrow = client.get_escrow(&escrow_id);
     assert_eq!(escrow.max_participants, 50);
@@ -156,6 +157,7 @@ fn test_explicit_max_participants_stored_in_get_escrow() {
         &300,
         &Some(cap),
         &None,
+        &false,
     );
     let escrow = client.get_escrow(&escrow_id);
     assert_eq!(escrow.max_participants, cap);
@@ -178,6 +180,7 @@ fn test_deposit_rejected_when_participant_cap_exceeded() {
         &3_000,
         &Some(2u32),
         &None,
+        &false,
     );
 
     client.deposit(&escrow_id, &p1, &1_000);
@@ -204,6 +207,7 @@ fn test_existing_participant_can_deposit_again_without_increasing_count() {
         &2_000,
         &Some(1u32),
         &None,
+        &false,
     );
     client.deposit(&escrow_id, &p1, &1_000);
     client.deposit(&escrow_id, &p1, &1_000);
@@ -232,6 +236,7 @@ fn test_metadata_stored_on_create_and_returned() {
         &2_500,
         &None,
         &Some(metadata.clone()),
+        &false,
     );
 
     let escrow = client.get_escrow(&split_id);
@@ -248,6 +253,7 @@ fn test_creator_can_update_metadata_while_active() {
         &5_000,
         &None,
         &Some(metadata_map(&env, &[("title", "Initial")])),
+        &false,
     );
 
     let updated = metadata_map(
@@ -271,6 +277,7 @@ fn test_update_metadata_rejected_after_release() {
         &1_000,
         &None,
         &None,
+        &false,
     );
     client.deposit(&split_id, &participant, &1_000);
     client.release_funds(&split_id);
@@ -300,6 +307,7 @@ fn test_create_escrow_rejects_metadata_with_too_many_keys() {
         &100,
         &None,
         &Some(metadata),
+        &false,
     );
     assert!(result.is_err());
 }
@@ -313,6 +321,7 @@ fn test_update_metadata_rejects_overlong_values() {
         &100,
         &None,
         &None,
+        &false,
     );
 
     let long_value = String::from_str(
@@ -324,4 +333,66 @@ fn test_update_metadata_rejects_overlong_values() {
 
     let result = client.try_update_metadata(&split_id, &metadata);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_whitelist_disabled_by_default_allows_non_whitelisted_deposit() {
+    let (env, client, _admin, creator, participant, _token_client, _token_admin) = setup();
+
+    let split_id = client.create_escrow(
+        &creator,
+        &String::from_str(&env, "Open"),
+        &1_000,
+        &None,
+        &None,
+        &false,
+    );
+
+    client.deposit(&split_id, &participant, &1_000);
+
+    let escrow = client.get_escrow(&split_id);
+    assert_eq!(escrow.deposited_amount, 1_000);
+    assert_eq!(escrow.participants.len(), 1);
+}
+
+#[test]
+fn test_whitelist_enabled_rejects_non_whitelisted_deposit() {
+    let (env, client, _admin, creator, participant, _token_client, _token_admin) = setup();
+
+    let split_id = client.create_escrow(
+        &creator,
+        &String::from_str(&env, "Restricted"),
+        &1_000,
+        &None,
+        &None,
+        &true,
+    );
+
+    let result = client.try_deposit(&split_id, &participant, &1_000);
+    assert!(result.is_err());
+    assert_eq!(client.get_escrow(&split_id).deposited_amount, 0);
+}
+
+#[test]
+fn test_creator_can_add_and_remove_whitelist_entries() {
+    let (env, client, _admin, creator, participant, _token_client, _token_admin) = setup();
+
+    let split_id = client.create_escrow(
+        &creator,
+        &String::from_str(&env, "Managed"),
+        &2_000,
+        &None,
+        &None,
+        &true,
+    );
+
+    client.add_to_whitelist(&split_id, &participant);
+    client.deposit(&split_id, &participant, &1_000);
+    assert_eq!(client.get_escrow(&split_id).deposited_amount, 1_000);
+
+    client.remove_from_whitelist(&split_id, &participant);
+
+    let result = client.try_deposit(&split_id, &participant, &1_000);
+    assert!(result.is_err());
+    assert_eq!(client.get_escrow(&split_id).deposited_amount, 1_000);
 }

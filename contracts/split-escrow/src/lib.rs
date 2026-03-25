@@ -75,6 +75,7 @@ impl SplitEscrowContract {
         total_amount: i128,
         max_participants: Option<u32>,
         metadata: Option<Map<String, String>>,
+        whitelist_enabled: bool,
     ) -> Result<u64, Error> {
         if !storage::has_admin(&env) {
             return Err(Error::NotInitialized);
@@ -107,6 +108,7 @@ impl SplitEscrowContract {
             participants: Vec::new(&env),
         };
         storage::set_split(&env, &split);
+        storage::set_whitelist_enabled(&env, split_id, whitelist_enabled);
         events::emit_split_created(&env, &split);
         Ok(split_id)
     }
@@ -125,6 +127,11 @@ impl SplitEscrowContract {
         let mut split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
         if split.status != SplitStatus::Pending {
             return Err(Error::SplitNotPending);
+        }
+        if storage::is_whitelist_enabled(&env, split_id)
+            && !storage::is_whitelisted(&env, split_id, &participant)
+        {
+            return Err(Error::Unauthorized);
         }
         if split.deposited_amount + amount > split.total_amount {
             return Err(Error::InvalidAmount);
@@ -147,6 +154,20 @@ impl SplitEscrowContract {
         }
         storage::set_split(&env, &split);
         events::emit_deposit(&env, split_id, &participant, amount);
+        Ok(())
+    }
+
+    pub fn add_to_whitelist(env: Env, split_id: u64, address: Address) -> Result<(), Error> {
+        let split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
+        split.creator.require_auth();
+        storage::add_to_whitelist(&env, split_id, &address);
+        Ok(())
+    }
+
+    pub fn remove_from_whitelist(env: Env, split_id: u64, address: Address) -> Result<(), Error> {
+        let split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
+        split.creator.require_auth();
+        storage::remove_from_whitelist(&env, split_id, &address);
         Ok(())
     }
 
