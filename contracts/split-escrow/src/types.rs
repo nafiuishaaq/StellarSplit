@@ -6,11 +6,13 @@ pub enum SplitStatus {
     Pending,
     Ready,
     Released,
+    /// Funds refunded to participants (e.g. dispute upheld).
+    Cancelled,
 }
 
 /// Escrow split state. `participants.len()` is the current distinct participant count.
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Split {
     pub split_id: u64,
     pub creator: Address,
@@ -23,6 +25,8 @@ pub struct Split {
     pub max_participants: u32,
     /// Distinct addresses that have deposited; length is the current participant count.
     pub participants: Vec<Address>,
+    /// Per-participant deposited balances so we can refund on dispute outcomes.
+    pub balances: Map<Address, i128>,
     /// Short on-chain context (max 128 bytes at creation/update); empty if unset.
     pub note: String,
 }

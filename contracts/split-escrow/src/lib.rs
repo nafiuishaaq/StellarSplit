@@ -14,6 +14,8 @@ pub use crate::types::{Split, SplitStatus};
 
 const DEFAULT_MAX_PARTICIPANTS: u32 = 50;
 const MAX_NOTE_LEN: u32 = 128;
+const MAX_METADATA_ENTRIES: u32 = 5;
+const MAX_METADATA_STRING_LEN: u32 = 64;
 
 fn validate_note_len(note: &String) -> Result<(), Error> {
     if note.len() > MAX_NOTE_LEN {
@@ -53,7 +55,7 @@ fn validate_metadata(metadata: &Map<String, String>) -> Result<(), Error> {
 }
 
 fn is_active(status: &SplitStatus) -> bool {
-    *status != SplitStatus::Released
+    *status != SplitStatus::Released && *status != SplitStatus::Cancelled
 }
 
 #[contract]
@@ -121,6 +123,8 @@ impl SplitEscrowContract {
             return Err(Error::InvalidAmount);
         }
 
+        let metadata = Map::new(&env);
+
         let note_stored = match note {
             Some(n) => {
                 validate_note_len(&n)?;
@@ -142,10 +146,11 @@ impl SplitEscrowContract {
             status: SplitStatus::Pending,
             max_participants: cap,
             participants: Vec::new(&env),
+            balances: Map::new(&env),
             note: note_stored,
         };
         storage::set_split(&env, &split);
-        storage::set_whitelist_enabled(&env, split_id, whitelist_enabled);
+        storage::set_whitelist_enabled(&env, split_id, false);
         events::emit_split_created(&env, &split);
         Ok(split_id)
     }
@@ -155,8 +160,8 @@ impl SplitEscrowContract {
         validate_note_len(&note)?;
         let mut split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
         split.creator.require_auth();
-        if split.status == SplitStatus::Released {
-            return Err(Error::EscrowNotActive);
+        if !is_active(&split.status) {
+            return Err(Error::SplitNotActive);
         }
         if split.note == note {
             return Ok(());
@@ -204,6 +209,13 @@ impl SplitEscrowContract {
             split.participants.push_back(participant.clone());
         }
 
+        // Track per-participant deposited balances so we can refund on dispute outcomes.
+        let previous_balance = split
+            .balances
+            .get(participant.clone())
+            .unwrap_or(0i128);
+        split.balances.set(participant.clone(), previous_balance + amount);
+
         let token_address = storage::get_token(&env);
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&participant, &env.current_contract_address(), &amount);
@@ -233,6 +245,8 @@ impl SplitEscrowContract {
 
     pub fn release_funds(env: Env, split_id: u64) -> Result<(), Error> {
         let mut split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
+        // Only the split creator can finalize settlement.
+        split.creator.require_auth();
         if split.status != SplitStatus::Ready {
             return Err(Error::SplitNotReady);
         }
@@ -255,6 +269,48 @@ impl SplitEscrowContract {
         Ok(())
     }
 
+    /// Cancel a split and refund all deposited participant balances.
+    /// Used when a dispute is upheld (raiser wins).
+    pub fn cancel_split(env: Env, split_id: u64) -> Result<(), Error> {
+        let mut split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
+        // Only the split creator can cancel/refund.
+        split.creator.require_auth();
+
+        if split.status == SplitStatus::Released || split.status == SplitStatus::Cancelled {
+            return Err(Error::SplitNotActive);
+        }
+
+        let token_address = storage::get_token(&env);
+        let token_client = token::Client::new(&env, &token_address);
+
+        // Refund all distinct participants.
+        let participants_len = split.participants.len();
+        let mut i = 0u32;
+        while i < participants_len {
+            let participant = split.participants.get(i).unwrap();
+            let amount = split.balances.get(participant.clone()).unwrap_or(0i128);
+            if amount > 0 {
+                token_client.transfer(&env.current_contract_address(), &participant, &amount);
+                // Zero out balances to prevent accidental double-refund.
+                split.balances.set(participant, 0i128);
+            }
+            i += 1;
+        }
+
+        // Clear participants list; split is now cancelled and cannot be released.
+        split.participants = Vec::new(&env);
+        split.deposited_amount = 0;
+        split.status = SplitStatus::Cancelled;
+        storage::set_split(&env, &split);
+        events::emit_cancelled(&env, split_id);
+        Ok(())
+    }
+
+    /// Alias for cancellation that matches the dispute contract's "reverse_split" concept.
+    pub fn reverse_split(env: Env, split_id: u64) -> Result<(), Error> {
+        Self::cancel_split(env, split_id)
+    }
+
     pub fn set_fee(env: Env, fee_bps: u32) -> Result<(), Error> {
         fees::set_fee(&env, fee_bps)
     }
@@ -267,6 +323,12 @@ impl SplitEscrowContract {
     /// `participants.len()`).
     pub fn get_escrow(env: Env, split_id: u64) -> Result<Split, Error> {
         storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)
+    }
+
+    /// View helper for dispute-resolution auth checks.
+    pub fn get_creator(env: Env, split_id: u64) -> Result<Address, Error> {
+        let split = storage::get_split(&env, split_id).ok_or(Error::SplitNotFound)?;
+        Ok(split.creator)
     }
 
     pub fn get_metadata(env: Env, split_id: u64) -> Result<Map<String, String>, Error> {

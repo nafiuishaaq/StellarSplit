@@ -1,7 +1,7 @@
 use soroban_sdk::contracterror;
 
 #[contracterror]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Error {
     NotFound = 1,
     AlreadyExists = 2,
@@ -12,4 +12,6 @@ pub enum Error {
     VotingPeriodEnded = 7,
     InvalidReason = 8,
     SplitNotFound = 9,
+    /// Resolver is not authorized to finalize escrow actions for this dispute.
+    UnauthorizedResolver = 10,
 }
