@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, String, Symbol};
 
 use crate::types::Split;
 
@@ -23,6 +23,11 @@ pub fn emit_deposit(env: &Env, split_id: u64, participant: &Address, amount: i12
 pub fn emit_released(env: &Env, split_id: u64, released_amount: i128) {
     env.events()
         .publish(("released", "split_id"), (split_id, released_amount));
+}
+
+pub fn emit_cancelled(env: &Env, split_id: u64) {
+    env.events()
+        .publish(("cancelled", "split_id"), split_id);
 }
 
 pub fn emit_fees_collected(env: &Env, amount: i128, treasury: &Address) {

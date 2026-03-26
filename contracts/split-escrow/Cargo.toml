@@ -8,7 +8,7 @@ license = "MIT"
 
 # This tells Cargo it’s a library crate (needed for Soroban contracts)
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = "21.0.0"
