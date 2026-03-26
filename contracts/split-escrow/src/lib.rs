@@ -24,17 +24,6 @@ fn validate_note_len(note: &String) -> Result<(), Error> {
     Ok(())
 }
 
-fn participant_known(participants: &Vec<Address>, addr: &Address) -> bool {
-    let mut i = 0u32;
-    while i < participants.len() {
-        if participants.get(i).unwrap() == *addr {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
 fn validate_metadata(metadata: &Map<String, String>) -> Result<(), Error> {
     if metadata.len() > MAX_METADATA_ENTRIES {
         return Err(Error::InvalidMetadata);
@@ -100,13 +89,14 @@ impl SplitEscrowContract {
         Ok(())
     }
 
-    /// Create an escrow split. If `max_participants` is `None`, the cap defaults to 50.
-    /// Optional `note` is stored on-chain (max 128 bytes); use `None` for no note.
+    /// Create an escrow split with specific participant obligations.
+    /// `total_amount` must equal the sum of all obligations.
     pub fn create_escrow(
         env: Env,
         creator: Address,
         description: String,
         total_amount: i128,
+        obligations: Map<Address, i128>,
         max_participants: Option<u32>,
         note: Option<String>,
     ) -> Result<u64, Error> {
@@ -118,9 +108,24 @@ impl SplitEscrowContract {
             return Err(Error::InvalidAmount);
         }
 
+        // Validate that total_amount matches sum of obligations.
+        let mut sum_obligations = 0i128;
+        let keys = obligations.keys();
+        for i in 0..keys.len() {
+            let key = keys.get(i).unwrap();
+            let val = obligations.get(key).unwrap();
+            if val <= 0 {
+                return Err(Error::InvalidAmount);
+            }
+            sum_obligations += val;
+        }
+        if sum_obligations != total_amount {
+            return Err(Error::TotalAmountMismatch);
+        }
+
         let cap = max_participants.unwrap_or(DEFAULT_MAX_PARTICIPANTS);
-        if cap == 0 {
-            return Err(Error::InvalidAmount);
+        if obligations.len() > cap {
+            return Err(Error::ParticipantCapExceeded);
         }
 
         let note_stored = match note {
@@ -131,15 +136,14 @@ impl SplitEscrowContract {
             None => String::from_str(&env, ""),
         };
 
-        // This contract currently doesn't accept arbitrary metadata at creation.
-        // Keep the on-chain metadata map empty for now.
         let metadata = Map::new(&env);
-
-        // Whitelist functionality is supported via add/remove calls, but default is disabled.
-        let whitelist_enabled = false;
-
         let split_id = storage::get_next_split_id(&env);
         storage::bump_next_split_id(&env);
+
+        let mut participants = Vec::new(&env);
+        for i in 0..keys.len() {
+            participants.push_back(keys.get(i).unwrap());
+        }
 
         let split = Split {
             split_id,
@@ -150,8 +154,9 @@ impl SplitEscrowContract {
             deposited_amount: 0,
             status: SplitStatus::Pending,
             max_participants: cap,
-            participants: Vec::new(&env),
+            participants,
             balances: Map::new(&env),
+            obligations,
             note: note_stored,
         };
         storage::set_split(&env, &split);
@@ -198,37 +203,37 @@ impl SplitEscrowContract {
         if split.status != SplitStatus::Pending {
             return Err(Error::SplitNotPending);
         }
+
+        // Whitelist check if enabled.
         if storage::is_whitelist_enabled(&env, split_id)
             && !storage::is_whitelisted(&env, split_id, &participant)
         {
             return Err(Error::Unauthorized);
         }
-        if split.deposited_amount + amount > split.total_amount {
+
+        // Check if participant has an obligation.
+        let obligation = split
+            .obligations
+            .get(participant.clone())
+            .ok_or(Error::ParticipantNotOwed)?;
+
+        let current_balance = split.balances.get(participant.clone()).unwrap_or(0i128);
+        if current_balance + amount > obligation {
             return Err(Error::InvalidAmount);
         }
-
-        if !participant_known(&split.participants, &participant) {
-            if split.participants.len() >= split.max_participants {
-                return Err(Error::ParticipantCapExceeded);
-            }
-            split.participants.push_back(participant.clone());
-        }
-
-        // Track per-participant deposited balances so we can refund on dispute outcomes.
-        let previous_balance = split
-            .balances
-            .get(participant.clone())
-            .unwrap_or(0i128);
-        split.balances.set(participant.clone(), previous_balance + amount);
 
         let token_address = storage::get_token(&env);
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&participant, &env.current_contract_address(), &amount);
 
+        split.balances.set(participant.clone(), current_balance + amount);
         split.deposited_amount += amount;
+
+        // Check if all obligations are met to transition to Ready.
         if split.deposited_amount == split.total_amount {
             split.status = SplitStatus::Ready;
         }
+
         storage::set_split(&env, &split);
         events::emit_deposit(&env, split_id, &participant, amount);
         Ok(())

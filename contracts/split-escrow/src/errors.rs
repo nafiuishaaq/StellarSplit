@@ -20,4 +20,7 @@ pub enum Error {
     /// Split is already finalized (released or cancelled) or otherwise not active.
     SplitNotActive = 14,
     InvalidMetadata = 15,
+    ParticipantNotOwed = 16,
+    InsufficientFulfillment = 17,
+    TotalAmountMismatch = 18,
 }
