@@ -33,8 +33,7 @@ pub fn emit_released(env: &Env, split_id: u64, released_amount: i128) {
 }
 
 pub fn emit_cancelled(env: &Env, split_id: u64) {
-    env.events()
-        .publish(("cancelled", "split_id"), split_id);
+    env.events().publish(("cancelled", "split_id"), split_id);
 }
 
 pub fn emit_fees_collected(env: &Env, amount: i128, treasury: &Address) {

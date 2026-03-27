@@ -226,7 +226,9 @@ impl SplitEscrowContract {
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&participant, &env.current_contract_address(), &amount);
 
-        split.balances.set(participant.clone(), current_balance + amount);
+        split
+            .balances
+            .set(participant.clone(), current_balance + amount);
         split.deposited_amount += amount;
 
         // Check if all obligations are met to transition to Ready.

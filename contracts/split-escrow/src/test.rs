@@ -4,7 +4,7 @@ extern crate std;
 use crate::{SplitEscrowContract, SplitEscrowContractClient, SplitStatus};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
 use soroban_sdk::IntoVal;
-use soroban_sdk::{testutils::Address as _, testutils::Events as _, Address, Env, String, Map};
+use soroban_sdk::{testutils::Address as _, testutils::Events as _, Address, Env, Map, String};
 
 fn setup() -> (
     Env,
@@ -88,8 +88,14 @@ fn test_admin_can_update_fee_and_treasury() {
     let mut obligations_a = Map::new(&env);
     obligations_a.set(participant.clone(), 1_000);
 
-    let split_a =
-        client.create_escrow(&creator, &String::from_str(&env, "A"), &1_000, &obligations_a, &None, &None);
+    let split_a = client.create_escrow(
+        &creator,
+        &String::from_str(&env, "A"),
+        &1_000,
+        &obligations_a,
+        &None,
+        &None,
+    );
     client.deposit(&split_a, &participant, &1_000);
     client.release_funds(&split_a);
     assert_eq!(token_client.balance(&treasury_a), 10);
@@ -101,8 +107,14 @@ fn test_admin_can_update_fee_and_treasury() {
     let mut obligations_b = Map::new(&env);
     obligations_b.set(participant.clone(), 2_000);
 
-    let split_b =
-        client.create_escrow(&creator, &String::from_str(&env, "B"), &2_000, &obligations_b, &None, &None);
+    let split_b = client.create_escrow(
+        &creator,
+        &String::from_str(&env, "B"),
+        &2_000,
+        &obligations_b,
+        &None,
+        &None,
+    );
     client.deposit(&split_b, &participant, &2_000);
     client.release_funds(&split_b);
     assert_eq!(token_client.balance(&treasury_b), 60);
@@ -255,7 +267,10 @@ fn test_cancel_partial_refunds() {
 
     client.cancel_split(&split_id);
 
-    assert_eq!(token_client.balance(&participant), balance_p1_before + 3_000);
+    assert_eq!(
+        token_client.balance(&participant),
+        balance_p1_before + 3_000
+    );
     assert_eq!(token_client.balance(&p2), balance_p2_before + 2_000);
     assert_eq!(client.get_escrow(&split_id).status, SplitStatus::Cancelled);
 }
