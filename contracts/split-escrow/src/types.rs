@@ -27,6 +27,8 @@ pub struct Split {
     pub participants: Vec<Address>,
     /// Per-participant deposited balances so we can refund on dispute outcomes.
     pub balances: Map<Address, i128>,
+    /// Per-participant expected contribution.
+    pub obligations: Map<Address, i128>,
     /// Short on-chain context (max 128 bytes at creation/update); empty if unset.
     pub note: String,
 }
