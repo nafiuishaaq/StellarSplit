@@ -1,8 +1,31 @@
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { Activity, CreditCard, PlusCircle, Trash, RefreshCw } from 'lucide-react';
 
-export function LiveActivityFeed() {
-    const { activities } = useCollaboration();
+export interface ActivityFeedItem {
+    id: string;
+    type: string;
+    userId?: string;
+    userName: string;
+    message: string;
+    timestamp: Date | string;
+    splitId?: string;
+}
+
+interface LiveActivityFeedProps {
+    activities?: ActivityFeedItem[];
+}
+
+export function LiveActivityFeed({ activities: initialActivities }: LiveActivityFeedProps) {
+    const { activities: liveActivities } = useCollaboration();
+    const activities = initialActivities && initialActivities.length > 0
+        ? [...initialActivities, ...liveActivities].filter(
+            (activity, index, collection) =>
+                collection.findIndex((candidate) => candidate.id === activity.id) === index
+        ).sort(
+            (left, right) =>
+                new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()
+        )
+        : liveActivities;
 
     if (activities.length === 0) {
         return (
@@ -24,7 +47,7 @@ export function LiveActivityFeed() {
         }
     };
 
-    const getTimeAgo = (date: Date) => {
+    const getTimeAgo = (date: Date | string) => {
         const seconds = Math.floor((new Date().getTime() - new Date(date).getTime()) / 1000);
         if (seconds < 60) return 'Just now';
         const mins = Math.floor(seconds / 60);

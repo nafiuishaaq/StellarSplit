@@ -18,9 +18,13 @@ import { ReceiptParserResults } from './ReceiptParserResults';
 import type { ParsedItem } from './ParsedItemEditor';
 import {
   createManualReviewItems,
-  simulateReceiptOcr,
-  type ReceiptOcrProgress,
 } from '../../utils/receiptOcr';
+import {
+  fetchReceiptOcrData,
+  fetchReceiptSignedUrl,
+  getApiErrorMessage,
+  uploadReceiptForSplit,
+} from '../../utils/api-client';
 
 type FlowStep =
   | 'choose'
@@ -34,6 +38,7 @@ type FlowStep =
 type CaptureMethod = 'camera' | 'upload' | 'manual';
 
 interface ReceiptFlowDraft {
+  receiptId?: string;
   step: FlowStep;
   method: CaptureMethod;
   imageUrl?: string;
@@ -164,15 +169,13 @@ export const ReceiptCaptureFlow = ({
   const beginProcessing = async ({
     method,
     file,
-    manualEntry,
   }: {
     method: CaptureMethod;
-    file?: File;
-    manualEntry?: ManualEntryData;
+    file: File;
   }) => {
     try {
-      const imageUrl =
-        file && file.type.startsWith('image/')
+      const localPreviewUrl =
+        file.type.startsWith('image/')
           ? await readFileAsDataUrl(file)
           : undefined;
 
@@ -180,45 +183,56 @@ export const ReceiptCaptureFlow = ({
         ...current,
         step: 'processing',
         method,
-        imageUrl: imageUrl ?? current.imageUrl,
-        imageName: file?.name ?? current.imageName,
-        manualEntry,
-        progress: 0,
-        progressLabel: 'Preparing your receipt for OCR',
+        imageUrl: localPreviewUrl ?? current.imageUrl,
+        imageName: file.name,
+        progress: 15,
+        progressLabel: 'Uploading your receipt',
         error: undefined,
       }));
 
-      const result = await simulateReceiptOcr(
-        {
-          fileName: file?.name,
-          manualEntry,
-        },
-        (progressUpdate: ReceiptOcrProgress) => {
-          setDraft((current) => ({
-            ...current,
-            step: 'processing',
-            method,
-            imageUrl: imageUrl ?? current.imageUrl,
-            imageName: file?.name ?? current.imageName,
-            manualEntry,
-            progress: progressUpdate.progress,
-            progressLabel: progressUpdate.label,
-            error: undefined,
-            updatedAt: new Date().toISOString(),
-          }));
-        }
-      );
+      const receipt = await uploadReceiptForSplit(splitId, file);
+
+      setDraft((current) => ({
+        ...current,
+        receiptId: receipt.id,
+        step: 'processing',
+        method,
+        imageUrl: localPreviewUrl ?? current.imageUrl,
+        imageName: file.name,
+        progress: 55,
+        progressLabel: 'Extracting items from the uploaded receipt',
+        error: undefined,
+        updatedAt: new Date().toISOString(),
+      }));
+
+      const [ocrResult, signedUrl] = await Promise.all([
+        fetchReceiptOcrData(receipt.id),
+        fetchReceiptSignedUrl(receipt.id),
+      ]);
+
+      if (!ocrResult.processed || !ocrResult.data) {
+        throw new Error('Receipt OCR is still processing. Please try again in a moment.')
+      }
+
+      const ocrData = ocrResult.data;
+      const parsedItems = (ocrData.items ?? []).map((item, index) => ({
+        id: `receipt-item-${index + 1}`,
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        confidence: Math.round((ocrData.confidence ?? 0) * 100),
+      }));
 
       updateDraft((current) => ({
         ...current,
+        receiptId: receipt.id,
         step: 'review',
         method,
-        imageUrl: imageUrl ?? current.imageUrl,
-        imageName: file?.name ?? current.imageName,
-        manualEntry,
-        merchant: result.merchant,
-        receiptTotal: result.receiptTotal,
-        items: result.items,
+        imageUrl: signedUrl ?? current.imageUrl,
+        imageName: file.name,
+        merchant: file.name.replace(/\.[^.]+$/, ''),
+        receiptTotal: ocrData.total ?? 0,
+        items: parsedItems,
         progress: 100,
         progressLabel: undefined,
         error: undefined,
@@ -229,9 +243,10 @@ export const ReceiptCaptureFlow = ({
         step: method,
         method,
         error:
-          error instanceof Error
+          getApiErrorMessage(error) ||
+          (error instanceof Error
             ? error.message
-            : 'We could not prepare this receipt. Please try again.',
+            : 'We could not prepare this receipt. Please try again.'),
         progress: 0,
         progressLabel: undefined,
       }));

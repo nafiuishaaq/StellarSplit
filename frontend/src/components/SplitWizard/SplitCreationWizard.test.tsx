@@ -1,11 +1,14 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter } from 'react-router-dom';
 import { validateBasicInfo, validateParticipants, validateItems } from './validators';
 import type { WizardState } from '../../types/wizard';
 import { INITIAL_WIZARD_STATE } from '../../types/wizard';
 
 const t = (key: string) => key;
+const navigateMock = vi.fn();
+const createSplitMock = vi.fn();
+const createActivityRecordMock = vi.fn();
 
 // ── Validator unit tests ──────────────────────────────────────────────────────
 
@@ -134,19 +137,37 @@ vi.mock('react-i18next', () => ({
     initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
-vi.mock('react-router', async () => {
-    const actual = await vi.importActual<typeof import('react-router')>('react-router');
+vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
     return {
         ...actual,
-        useNavigate: () => vi.fn(),
+        useNavigate: () => navigateMock,
     };
 });
+
+vi.mock('../../hooks/use-wallet', () => ({
+    useWallet: () => ({
+        activeUserId: 'GCKF6JB5YV22K6R5VTR7W3M2CY2K4QJZ2A6XHZL2RTPE5L77W4LLDWEZ',
+    }),
+}));
+
+vi.mock('../../utils/api-client', () => ({
+    createSplit: (...args: unknown[]) => createSplitMock(...args),
+    createActivityRecord: (...args: unknown[]) => createActivityRecordMock(...args),
+    getApiErrorMessage: (error: unknown) =>
+        error instanceof Error ? error.message : 'Request failed',
+    getApiFieldErrors: () => ({}),
+}));
 
 import { SplitCreationWizard } from './SplitCreationWizard';
 
 describe('SplitCreationWizard navigation', () => {
     beforeEach(() => {
         localStorage.clear();
+        navigateMock.mockReset();
+        createSplitMock.mockReset();
+        createActivityRecordMock.mockReset();
+        createActivityRecordMock.mockResolvedValue(undefined);
     });
 
     it('renders the wizard on step 1', () => {
@@ -217,5 +238,56 @@ describe('SplitCreationWizard navigation', () => {
         );
         const input = screen.getByDisplayValue('Saved Draft Title');
         expect(input).toBeDefined();
+    });
+
+    it('submits a real split payload and navigates to the created split', async () => {
+        createSplitMock.mockResolvedValue({ id: 'split-123' });
+
+        render(
+            <MemoryRouter>
+                <SplitCreationWizard />
+            </MemoryRouter>
+        );
+
+        fireEvent.change(
+            screen.getByPlaceholderText('wizard.basicInfo.splitTitlePlaceholder'),
+            { target: { value: 'Dinner with friends' } },
+        );
+        fireEvent.change(screen.getByPlaceholderText('0.00'), {
+            target: { value: '120' },
+        });
+        fireEvent.click(screen.getByText('wizard.next'));
+
+        fireEvent.click(screen.getByText('wizard.next'));
+
+        fireEvent.click(screen.getByText('wizard.participants.addParticipant'));
+        fireEvent.change(screen.getByPlaceholderText('wizard.participants.namePlaceholder'), {
+            target: { value: 'Alice' },
+        });
+        fireEvent.click(screen.getByText('wizard.participants.addParticipant'));
+        fireEvent.change(screen.getByPlaceholderText('wizard.participants.namePlaceholder'), {
+            target: { value: 'Bob' },
+        });
+        fireEvent.click(screen.getByText('wizard.next'));
+
+        fireEvent.click(screen.getByText('wizard.next'));
+        fireEvent.click(screen.getByText('wizard.createSplit'));
+
+        expect(createSplitMock).toHaveBeenCalledTimes(1);
+        expect(createSplitMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                description: 'Dinner with friends',
+                creatorWalletAddress: 'GCKF6JB5YV22K6R5VTR7W3M2CY2K4QJZ2A6XHZL2RTPE5L77W4LLDWEZ',
+                preferredCurrency: 'USD',
+                totalAmount: 120,
+                participants: expect.arrayContaining([
+                    expect.objectContaining({ amountOwed: 60 }),
+                ]),
+            }),
+        );
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith('/split/split-123');
+        });
+        expect(localStorage.getItem('splitwizard_draft')).toBeNull();
     });
 });

@@ -2,7 +2,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { WalletButton } from "./wallet-button";
 
 interface NavbarProps {
-  onMenuOpen: () => void;
+  onMenuOpen?: () => void;
 }
 
 export default function Navbar({ onMenuOpen }: NavbarProps) {
@@ -47,7 +47,7 @@ export default function Navbar({ onMenuOpen }: NavbarProps) {
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
           {/* Hamburger — hidden on lg+ since sidebar is always visible there */}
           <button
-            onClick={onMenuOpen}
+            onClick={() => onMenuOpen?.()}
             className="lg:hidden"
             aria-label="Open navigation menu"
             style={{

@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, beforeEach } from "vitest";
 import { NotificationItem } from "./NotificationItem";
 import { useNotificationsStore } from "../../store/notifications";

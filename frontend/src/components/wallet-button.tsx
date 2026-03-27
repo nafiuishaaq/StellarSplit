@@ -20,28 +20,38 @@ export type WalletButtonProps = React.ComponentProps<typeof Button> & {
 export function WalletButton({ showIcon = true, onClick, ...props }: WalletButtonProps) {
   const {
     publicKey,
+    activeUserId,
     isConnected,
     isConnecting,
+    isRefreshing,
     hasFreighter,
     error,
-    walletNetworkPassphrase,
+    requiredNetworkLabel,
+    walletNetworkLabel,
     isOnAllowedNetwork,
+    lastConnectedAccount,
     connect,
     disconnect,
+    refresh,
   } = useWallet()
 
   const showWrongNetwork = isConnected && !isOnAllowedNetwork
-  const displayAddress = publicKey ? shortenAddress(publicKey) : null
+  const reconnectAccount = lastConnectedAccount && !isConnected ? shortenAddress(lastConnectedAccount) : null
+  const displayAddress = publicKey ? shortenAddress(publicKey) : reconnectAccount
 
   let label = "Connect Wallet"
   if (!hasFreighter) {
     label = "Install Freighter"
   } else if (isConnecting) {
     label = "Connecting..."
+  } else if (isRefreshing && activeUserId) {
+    label = "Restoring..."
   } else if (showWrongNetwork) {
     label = "Wrong Network"
   } else if (isConnected && displayAddress) {
     label = displayAddress
+  } else if (reconnectAccount) {
+    label = `Reconnect ${reconnectAccount}`
   } else if (error) {
     label = error
   }
@@ -49,10 +59,12 @@ export function WalletButton({ showIcon = true, onClick, ...props }: WalletButto
   const title = !hasFreighter
     ? "Freighter extension not detected"
     : showWrongNetwork
-      ? `Switch Freighter to the expected network. Current: ${walletNetworkPassphrase ?? "Unknown"}`
-      : error ?? undefined
+      ? `Switch Freighter from ${walletNetworkLabel} to ${requiredNetworkLabel}.`
+      : reconnectAccount
+        ? `Reconnect ${reconnectAccount} and confirm ${requiredNetworkLabel} before paying.`
+        : error ?? undefined
 
-  const isDisabled = props.disabled || isConnecting || !hasFreighter
+  const isDisabled = props.disabled || isConnecting || isRefreshing || !hasFreighter
 
   const handleClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
     onClick?.(event)
@@ -62,6 +74,14 @@ export function WalletButton({ showIcon = true, onClick, ...props }: WalletButto
 
     if (isConnected) {
       disconnect()
+      return
+    }
+
+    if (reconnectAccount) {
+      await refresh()
+      if (!publicKey) {
+        await connect()
+      }
       return
     }
 
@@ -88,12 +108,12 @@ export function WalletButton({ showIcon = true, onClick, ...props }: WalletButto
       className={`${baseClasses} ${variantClasses} ${props.className ?? ""}`}
       onClick={handleClick}
       disabled={isDisabled}
-      aria-busy={isConnecting || undefined}
+      aria-busy={isConnecting || isRefreshing || undefined}
       title={title}
     >
       {showIcon ? (
         <Wallet
-          className={`h-4 w-4 transition-transform ${isConnecting ? "animate-pulse" : ""}`}
+          className={`h-4 w-4 transition-transform ${(isConnecting || isRefreshing) ? "animate-pulse" : ""}`}
         />
       ) : null}
       <span className="truncate max-w-[140px] text-sm font-semibold">{label}</span>

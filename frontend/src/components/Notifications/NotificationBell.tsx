@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { useDisclosure } from "../../hooks/useDisclosure";
 import { useNotificationsStore } from "../../store/notifications";

@@ -35,7 +35,11 @@ const pwaOptions: Partial<VitePWAOptions> = {
     ],
   },
   workbox: {
+    cleanupOutdatedCaches: true,
+    clientsClaim: true,
     globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+    navigateFallback: "/index.html",
+    skipWaiting: true,
   },
 };
 

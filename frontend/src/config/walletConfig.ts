@@ -9,13 +9,51 @@ import {
 
 // Wallet + network primitives only; UI and contract layers should consume via hooks/context.
 
-export const SOROBAN_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
-export const SOROBAN_RPC_URL = "https://soroban-testnet.stellar.org"
+export const STELLAR_NETWORKS = {
+  testnet: {
+    key: "testnet",
+    label: "Stellar Testnet",
+    passphrase: "Test SDF Network ; September 2015",
+    horizonUrl: "https://horizon-testnet.stellar.org",
+    sorobanRpcUrl: "https://soroban-testnet.stellar.org",
+  },
+  public: {
+    key: "public",
+    label: "Stellar Mainnet",
+    passphrase: "Public Global Stellar Network ; September 2015",
+    horizonUrl: "https://horizon.stellar.org",
+    sorobanRpcUrl: "https://mainnet.sorobanrpc.com",
+  },
+  futurenet: {
+    key: "futurenet",
+    label: "Stellar Futurenet",
+    passphrase: "Test SDF Future Network ; October 2022",
+    horizonUrl: "https://horizon-futurenet.stellar.org",
+    sorobanRpcUrl: "https://rpc-futurenet.stellar.org",
+  },
+} as const
+
+export type StellarNetworkKey = keyof typeof STELLAR_NETWORKS
+
+const configuredNetwork =
+  (import.meta.env.VITE_STELLAR_NETWORK as StellarNetworkKey | undefined)?.toLowerCase() ??
+  "testnet"
+
+export const EXPECTED_STELLAR_NETWORK =
+  STELLAR_NETWORKS[
+    configuredNetwork in STELLAR_NETWORKS
+      ? (configuredNetwork as StellarNetworkKey)
+      : "testnet"
+  ]
+
+export const SOROBAN_NETWORK_PASSPHRASE = EXPECTED_STELLAR_NETWORK.passphrase
+export const SOROBAN_RPC_URL = EXPECTED_STELLAR_NETWORK.sorobanRpcUrl
+export const HORIZON_URL = EXPECTED_STELLAR_NETWORK.horizonUrl
 
 const NETWORK_PASSPHRASES = {
-  TESTNET: "Test SDF Network ; September 2015",
-  PUBLIC: "Public Global Stellar Network ; September 2015",
-  FUTURENET: "Test SDF Future Network ; October 2022",
+  TESTNET: STELLAR_NETWORKS.testnet.passphrase,
+  PUBLIC: STELLAR_NETWORKS.public.passphrase,
+  FUTURENET: STELLAR_NETWORKS.futurenet.passphrase,
 } as const
 
 const FREIGHTER_EXTERNAL_MSG_REQUEST = "FREIGHTER_EXTERNAL_MSG_REQUEST"
@@ -142,6 +180,28 @@ export async function getFreighterNetworkPassphrase(): Promise<string | null> {
   }
 
   return null
+}
+
+export function getNetworkLabel(passphrase: string | null | undefined): string {
+  if (!passphrase) {
+    return "Unknown network"
+  }
+
+  const network = Object.values(STELLAR_NETWORKS).find(
+    (candidate) => candidate.passphrase === passphrase,
+  )
+  return network?.label ?? passphrase
+}
+
+export function isExpectedNetwork(passphrase: string | null | undefined): boolean {
+  return !!passphrase && passphrase === EXPECTED_STELLAR_NETWORK.passphrase
+}
+
+export function getNetworkMismatchMessage(
+  passphrase: string | null | undefined,
+): string {
+  const currentLabel = getNetworkLabel(passphrase)
+  return `Switch Freighter from ${currentLabel} to ${EXPECTED_STELLAR_NETWORK.label} to continue.`
 }
 
 export async function connectWallet(): Promise<string> {

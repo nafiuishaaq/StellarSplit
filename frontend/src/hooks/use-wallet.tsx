@@ -1,30 +1,45 @@
-
-
 import * as React from 'react'
 import {
   connectWallet,
+  EXPECTED_STELLAR_NETWORK,
   getFreighterNetworkPassphrase,
+  getNetworkLabel,
+  getNetworkMismatchMessage,
   getWalletPublicKey,
+  HORIZON_URL,
+  isExpectedNetwork,
   isFreighterInstalled,
   signWithFreighter,
   SOROBAN_NETWORK_PASSPHRASE,
   SOROBAN_RPC_URL,
 } from '../config/walletConfig'
+import {
+  getStoredActiveUserId,
+  setStoredActiveUserId,
+} from '../utils/session'
 
-// WalletProvider owns Freighter connection state; contract code should consume it via this context.
 type WalletContextValue = {
   publicKey: string | null
+  activeUserId: string | null
   isConnected: boolean
   isConnecting: boolean
+  isRefreshing: boolean
   hasFreighter: boolean
   error: string | null
   networkPassphrase: string
+  requiredNetworkPassphrase: string
+  requiredNetworkLabel: string
   rpcUrl: string
+  horizonUrl: string
   walletNetworkPassphrase: string | null
+  walletNetworkLabel: string
   isOnAllowedNetwork: boolean
+  canTransact: boolean
+  lastConnectedAccount: string | null
   connect: () => Promise<void>
   disconnect: () => void
   refresh: () => Promise<void>
+  clearError: () => void
   signTransaction: (txXdr: string) => Promise<string>
 }
 
@@ -40,75 +55,102 @@ function getErrorMessage(error: unknown): string {
   return ''
 }
 
+function isNotConnectedError(error: unknown): boolean {
+  return getErrorMessage(error).toLowerCase().includes('not connected')
+}
+
 function getUserFacingError(error: unknown): string | null {
   const message = getErrorMessage(error)
   if (!message) {
     return 'Wallet error'
   }
+
   const lower = message.toLowerCase()
   if (lower.includes('not connected')) {
     return null
   }
   if (lower.includes('not installed')) {
-    return 'Freighter not installed'
+    return 'Freighter is not installed in this browser.'
   }
   if (lower.includes('rejected') || lower.includes('declined') || lower.includes('denied')) {
-    return 'Connection rejected'
+    return 'You rejected the wallet request.'
   }
-  return message
-}
 
-function isNotConnectedError(error: unknown): boolean {
-  return getErrorMessage(error).toLowerCase().includes('not connected')
+  return message
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [publicKey, setPublicKey] = React.useState<string | null>(null)
   const [isConnecting, setIsConnecting] = React.useState(false)
+  const [isRefreshing, setIsRefreshing] = React.useState(false)
   const [hasFreighter, setHasFreighter] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [walletNetworkPassphrase, setWalletNetworkPassphrase] = React.useState<string | null>(null)
+  const [lastConnectedAccount, setLastConnectedAccount] = React.useState<string | null>(
+    getStoredActiveUserId(),
+  )
   const freighterCheckAttempts = React.useRef(0)
 
-  const isOnAllowedNetwork = React.useMemo(() => {
-    // Treat any known Freighter network as "allowed" so we support both
-    // public and testnet passphrases instead of hard-coding Soroban only.
-    return !!walletNetworkPassphrase
-  }, [walletNetworkPassphrase])
+  const activeUserId = publicKey ?? lastConnectedAccount ?? getStoredActiveUserId()
+  const isOnAllowedNetwork = React.useMemo(
+    () => isExpectedNetwork(walletNetworkPassphrase),
+    [walletNetworkPassphrase],
+  )
+  const walletNetworkLabel = React.useMemo(
+    () => getNetworkLabel(walletNetworkPassphrase),
+    [walletNetworkPassphrase],
+  )
+  const canTransact = !!publicKey && isOnAllowedNetwork
 
-  const updateNetworkStatus = React.useCallback(async () => {
+  const clearError = React.useCallback(() => {
+    setError(null)
+  }, [])
+
+  const applyNetworkStatus = React.useCallback(async () => {
     const passphrase = await getFreighterNetworkPassphrase()
     setWalletNetworkPassphrase(passphrase)
+    if (passphrase && !isExpectedNetwork(passphrase)) {
+      setError(getNetworkMismatchMessage(passphrase))
+    }
   }, [])
 
   const refresh = React.useCallback(async () => {
-    const installed = await isFreighterInstalled()
-    setHasFreighter(installed)
-
-    if (!installed) {
-      setPublicKey(null)
-      setWalletNetworkPassphrase(null)
-      setError(null)
-      return
-    }
+    setIsRefreshing(true)
 
     try {
-      const key = await getWalletPublicKey()
-      setPublicKey(key)
-      setError(null)
-      await updateNetworkStatus()
-    } catch (err) {
-      if (isNotConnectedError(err)) {
+      const installed = await isFreighterInstalled()
+      setHasFreighter(installed)
+
+      if (!installed) {
         setPublicKey(null)
         setWalletNetworkPassphrase(null)
         setError(null)
         return
       }
-      setPublicKey(null)
-      setWalletNetworkPassphrase(null)
-      setError(getUserFacingError(err))
+
+      try {
+        const key = await getWalletPublicKey()
+        setPublicKey(key)
+        setLastConnectedAccount(key)
+        setStoredActiveUserId(key)
+        setError(null)
+        await applyNetworkStatus()
+      } catch (refreshError) {
+        if (isNotConnectedError(refreshError)) {
+          setPublicKey(null)
+          setWalletNetworkPassphrase(null)
+          setError(null)
+          return
+        }
+
+        setPublicKey(null)
+        setWalletNetworkPassphrase(null)
+        setError(getUserFacingError(refreshError))
+      }
+    } finally {
+      setIsRefreshing(false)
     }
-  }, [updateNetworkStatus])
+  }, [applyNetworkStatus])
 
   const connect = React.useCallback(async () => {
     if (isConnecting) {
@@ -119,12 +161,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setHasFreighter(installed)
 
     if (!installed) {
-      setError('Freighter not installed')
-      return
-    }
-
-    if (publicKey) {
-      await updateNetworkStatus()
+      setError('Freighter is not installed in this browser.')
       return
     }
 
@@ -134,9 +171,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     try {
       const key = await connectWallet()
       setPublicKey(key)
-      await updateNetworkStatus()
-    } catch (err) {
-      const userError = getUserFacingError(err)
+      setLastConnectedAccount(key)
+      setStoredActiveUserId(key)
+      await applyNetworkStatus()
+    } catch (connectError) {
+      const userError = getUserFacingError(connectError)
       if (userError) {
         setError(userError)
       }
@@ -145,22 +184,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsConnecting(false)
     }
-  }, [isConnecting, publicKey, updateNetworkStatus])
+  }, [applyNetworkStatus, isConnecting])
 
   const disconnect = React.useCallback(() => {
     setPublicKey(null)
+    setLastConnectedAccount(null)
     setWalletNetworkPassphrase(null)
     setError(null)
+    setStoredActiveUserId(null)
   }, [])
 
   const signTransaction = React.useCallback(
     async (txXdr: string) => {
       if (!publicKey) {
-        throw new Error('Wallet not connected')
+        throw new Error('Connect Freighter before signing.')
       }
+
       if (!walletNetworkPassphrase) {
-        throw new Error('Unknown wallet network')
+        throw new Error('Freighter network is unavailable. Refresh the wallet and try again.')
       }
+
+      if (!isExpectedNetwork(walletNetworkPassphrase)) {
+        throw new Error(getNetworkMismatchMessage(walletNetworkPassphrase))
+      }
+
       return signWithFreighter(txXdr, walletNetworkPassphrase)
     },
     [publicKey, walletNetworkPassphrase],
@@ -171,47 +218,87 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [refresh])
 
   React.useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return undefined
+    }
+
+    const handleFocus = () => {
+      void refresh()
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh()
+      }
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [refresh])
+
+  React.useEffect(() => {
     if (hasFreighter) {
       freighterCheckAttempts.current = 0
       return
     }
+
     if (freighterCheckAttempts.current >= 3) {
       return
     }
+
     const timeoutId = window.setTimeout(() => {
       freighterCheckAttempts.current += 1
       void refresh()
     }, 1000)
+
     return () => window.clearTimeout(timeoutId)
   }, [hasFreighter, refresh])
 
   const value = React.useMemo<WalletContextValue>(
     () => ({
       publicKey,
+      activeUserId,
       isConnected: !!publicKey,
       isConnecting,
+      isRefreshing,
       hasFreighter,
       error,
       networkPassphrase: SOROBAN_NETWORK_PASSPHRASE,
+      requiredNetworkPassphrase: EXPECTED_STELLAR_NETWORK.passphrase,
+      requiredNetworkLabel: EXPECTED_STELLAR_NETWORK.label,
       rpcUrl: SOROBAN_RPC_URL,
+      horizonUrl: HORIZON_URL,
       walletNetworkPassphrase,
+      walletNetworkLabel,
       isOnAllowedNetwork,
+      canTransact,
+      lastConnectedAccount,
       connect,
       disconnect,
       refresh,
+      clearError,
       signTransaction,
     }),
     [
-      publicKey,
-      isConnecting,
-      hasFreighter,
-      error,
-      walletNetworkPassphrase,
-      isOnAllowedNetwork,
+      activeUserId,
+      canTransact,
       connect,
       disconnect,
+      error,
+      hasFreighter,
+      isConnecting,
+      isOnAllowedNetwork,
+      isRefreshing,
+      lastConnectedAccount,
+      publicKey,
       refresh,
       signTransaction,
+      walletNetworkLabel,
+      walletNetworkPassphrase,
     ],
   )
 

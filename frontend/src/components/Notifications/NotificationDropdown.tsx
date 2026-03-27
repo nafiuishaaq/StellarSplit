@@ -1,4 +1,4 @@
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { useNotificationsStore } from "../../store/notifications";
 import { NotificationItem } from "./NotificationItem";
 

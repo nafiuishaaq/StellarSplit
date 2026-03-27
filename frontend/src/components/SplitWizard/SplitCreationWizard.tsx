@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Save, ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';
 import { StepIndicator } from './StepIndicator';
@@ -14,8 +14,17 @@ import {
     validateParticipants,
     validateItems,
 } from './validators';
+import { useWallet } from '../../hooks/use-wallet';
 import type { WizardState } from '../../types/wizard';
 import { INITIAL_WIZARD_STATE, WIZARD_DRAFT_KEY } from '../../types/wizard';
+import { calculateWizardSplit } from '../../utils/split-calculations';
+import {
+    createActivityRecord,
+    createSplit,
+    getApiErrorMessage,
+    getApiFieldErrors,
+} from '../../utils/api-client';
+import { storeSplitParticipantDirectory } from '../../utils/session';
 
 const loadDraft = (): WizardState => {
     try {
@@ -31,6 +40,7 @@ export const SplitCreationWizard = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const announceRef = useRef<HTMLDivElement>(null);
+    const { activeUserId } = useWallet();
 
     const [wizardState, setWizardState] = useState<WizardState>(loadDraft);
     const [currentStep, setCurrentStep] = useState(0);
@@ -83,6 +93,24 @@ export const SplitCreationWizard = () => {
         setErrors({});
     }, []);
 
+    const generateUuid = () => {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+            const random = Math.random() * 16 | 0;
+            const value = char === 'x' ? random : (random & 0x3 | 0x8);
+            return value.toString(16);
+        });
+    };
+
+    const ensureUuid = (value: string) => {
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+            ? value
+            : generateUuid();
+    };
+
     const validateCurrentStep = (): boolean => {
         let stepErrors: Record<string, string> = {};
 
@@ -125,12 +153,94 @@ export const SplitCreationWizard = () => {
 
     const handleSubmit = async () => {
         if (!validateCurrentStep()) return;
+        if (!activeUserId) {
+            setErrors({
+                submit: 'Connect your wallet before creating a split.',
+            });
+            return;
+        }
+
         setIsSubmitting(true);
         try {
-            // Simulate async submission — replace with real API call
-            await new Promise<void>((resolve) => setTimeout(resolve, 800));
+            const participantsWithApiIds = wizardState.participants.map((participant) => ({
+                ...participant,
+                apiId: ensureUuid(participant.id),
+            }));
+
+            const calculation = calculateWizardSplit({
+                ...wizardState,
+                participants: participantsWithApiIds.map((participant) => ({
+                    ...participant,
+                    id: participant.apiId,
+                })),
+            });
+
+            const shareMap = new Map(
+                calculation.shares.map((share) => [share.participantId, share.total]),
+            );
+
+            const createdSplit = await createSplit({
+                totalAmount: calculation.grandTotal,
+                description: wizardState.title.trim(),
+                creatorWalletAddress: activeUserId,
+                preferredCurrency: wizardState.currency,
+                participants: participantsWithApiIds.map((participant) => ({
+                    userId: participant.apiId,
+                    amountOwed: shareMap.get(participant.apiId) ?? 0,
+                    walletAddress: participant.walletAddress?.trim() || undefined,
+                })),
+                items: wizardState.splitMethod === 'itemized'
+                    ? wizardState.items.map((item) => ({
+                        name: item.name.trim(),
+                        quantity: 1,
+                        unitPrice: item.price,
+                        totalPrice: item.price,
+                        assignedToIds: (item.assignedTo.length > 0 ? item.assignedTo : participantsWithApiIds.map((participant) => participant.id))
+                            .map((participantId) => {
+                                const participant = participantsWithApiIds.find((candidate) => candidate.id === participantId);
+                                return participant?.apiId;
+                            })
+                            .filter((participantId): participantId is string => Boolean(participantId)),
+                    }))
+                    : undefined,
+            });
+
+            storeSplitParticipantDirectory(
+                createdSplit.id,
+                participantsWithApiIds.reduce<Record<string, { name: string; email?: string; walletAddress?: string }>>(
+                    (directory, participant) => {
+                        directory[participant.apiId] = {
+                            name: participant.name.trim() || participant.apiId,
+                            email: participant.email?.trim() || undefined,
+                            walletAddress: participant.walletAddress?.trim() || undefined,
+                        };
+                        return directory;
+                    },
+                    {},
+                ),
+            );
+
+            await createActivityRecord({
+                userId: activeUserId,
+                activityType: 'split_created',
+                splitId: createdSplit.id,
+                metadata: {
+                    title: wizardState.title.trim(),
+                    totalAmount: calculation.grandTotal,
+                    currency: wizardState.currency,
+                    participantCount: wizardState.participants.length,
+                },
+            }).catch(() => undefined);
+
             localStorage.removeItem(WIZARD_DRAFT_KEY);
-            navigate('/dashboard');
+            navigate(`/split/${createdSplit.id}`);
+        } catch (error) {
+            const fieldErrors = getApiFieldErrors(error);
+            setErrors(
+                Object.keys(fieldErrors).length > 0
+                    ? fieldErrors
+                    : { submit: getApiErrorMessage(error) },
+            );
         } finally {
             setIsSubmitting(false);
         }
@@ -230,6 +340,11 @@ export const SplitCreationWizard = () => {
 
             {/* Step content */}
             <div className="max-w-lg mx-auto px-4 py-6">
+                {errors.submit ? (
+                    <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                        {errors.submit}
+                    </div>
+                ) : null}
                 {renderStep()}
             </div>
 

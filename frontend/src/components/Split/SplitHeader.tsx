@@ -9,14 +9,25 @@ interface SplitHeaderProps {
 
 export const SplitHeader = ({ split }: SplitHeaderProps) => {
     const { t } = useTranslation();
+    const statusLabel =
+        split.status === 'completed'
+            ? t('common.paid')
+            : split.status === 'partial'
+                ? 'Partially settled'
+                : t('common.pending');
+    const statusClasses =
+        split.status === 'completed'
+            ? 'bg-green-100 text-green-700'
+            : split.status === 'partial'
+                ? 'bg-blue-100 text-blue-700'
+                : 'bg-blue-100 text-blue-700';
 
     return (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-4">
             <div className="flex justify-between items-start mb-2">
                 <h1 className="text-2xl font-bold text-gray-900 leading-tight">{split.title}</h1>
-                <span className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${split.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
-                    }`}>
-                    {split.status === 'active' ? t('common.pending') : t('common.paid')}
+                <span className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${statusClasses}`}>
+                    {statusLabel}
                 </span>
             </div>
 

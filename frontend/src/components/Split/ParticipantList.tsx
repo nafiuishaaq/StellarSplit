@@ -11,6 +11,30 @@ interface ParticipantListProps {
 export const ParticipantList = ({ participants, currency }: ParticipantListProps) => {
     const { t } = useTranslation();
 
+    const getStatusLabel = (status: Participant['status']) => {
+        if (status === 'paid') {
+            return t('common.paid');
+        }
+
+        if (status === 'partial') {
+            return 'Partially paid';
+        }
+
+        return t('common.pending');
+    };
+
+    const getStatusClasses = (status: Participant['status']) => {
+        if (status === 'paid') {
+            return 'text-green-600';
+        }
+
+        if (status === 'partial') {
+            return 'text-blue-600';
+        }
+
+        return 'text-orange-500';
+    };
+
     return (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-24 md:mb-6">
             <div className="p-4 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
@@ -41,15 +65,20 @@ export const ParticipantList = ({ participants, currency }: ParticipantListProps
                                     {person.name === 'You' ? t('common.you') : person.name}
                                     {person.isCurrentUser && <span className="text-[10px] uppercase font-bold bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded tracking-wide">{t('common.you')}</span>}
                                 </span>
-                                <span className={`text-xs flex items-center gap-1 font-medium ${person.status === 'paid' ? 'text-green-600' : 'text-orange-500'}`}>
-                                    {person.status === 'paid' ? t('common.paid') : t('common.pending')}
+                                <span className={`text-xs flex items-center gap-1 font-medium ${getStatusClasses(person.status)}`}>
+                                    {getStatusLabel(person.status)}
                                 </span>
                             </div>
                         </div>
                         <div className="text-right">
                             <p className={`font-bold ${person.status === 'paid' ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
-                                {formatCurrency(person.amountOwed, currency)}
+                                {formatCurrency(person.amountDue ?? person.amountOwed, currency)}
                             </p>
+                            {person.status === 'partial' && person.amountPaid ? (
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Paid {formatCurrency(person.amountPaid, currency)}
+                                </p>
+                            ) : null}
                         </div>
                     </div>
                 ))}

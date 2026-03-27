@@ -40,10 +40,9 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           flexDirection: "column",
           zIndex: 40,
           overflowY: "auto",
-          transform: isOpen ? "translateX(0)" : "translateX(-100%)",
           transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
         }}
-        className="lg:!translate-x-0"
+        className={`${isOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}
       >
         {/* Accent top line */}
         <div

@@ -1,5 +1,5 @@
 import type { ComponentType, MouseEvent } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import {
   Bell,
   UserPlus,
